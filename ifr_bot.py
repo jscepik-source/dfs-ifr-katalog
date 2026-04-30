@@ -9,9 +9,10 @@ import json
 BASIS_URL = "https://aip.dfs.de/BasicIFR/"
 
 IGNORIEREN = {
-    'AIP', 'Impressum', 'Disclamer', 'Datenschutz',
-    'AD Flugplätze', 'AD 0 Inhalt', 'AD 1 Allgemeines',
-    'AD 2 Liste der Flugplätze'
+    'AIP', 'AD', 'Impressum', 'Disclamer', 'Datenschutz',
+    'AD 0', 'AD 1 Flugplätze/Hubschrauberflugplätze – Einführung',
+    'AD 2 Flugplätze', 'AD 3 Hubschrauberflugplätze',
+    'MIL-AD 1', 'MIL-AD 2'
 }
 
 
@@ -55,56 +56,55 @@ def durchlauf():
     katalog = {}
 
     try:
+        # 1. Startseite → AD Flugplätze
         browser.get(BASIS_URL)
         warte(browser)
 
-        # AD Flugplätze klicken
+        ad_url = next((href for text, href in alle_links(browser)
+                       if "AD Flugplätze" in text and href), None)
+        if not ad_url:
+            print("Fehler: AD Flugplätze nicht gefunden.")
+            return
+
+        # 2. AD Flugplätze → AD 2 Flugplätze
+        browser.get(ad_url)
+        warte(browser)
+
+        ad2_url = next((href for text, href in alle_links(browser)
+                        if "AD 2 Flugplätze" in text and href), None)
+        if not ad2_url:
+            print("Fehler: AD 2 Flugplätze nicht gefunden.")
+            return
+
+        # 3. Alle Flughafen-URLs direkt einsammeln (keine Alphabet-Ordner)
+        browser.get(ad2_url)
+        warte(browser)
+
+        flughafen_urls = {}
         for text, href in alle_links(browser):
-            if "AD Flugplätze" in text:
-                browser.execute_script(
-                    "arguments[0].click();",
-                    browser.find_element(By.LINK_TEXT, text)
-                )
-                break
-        time.sleep(2)
+            if (href and "aip.dfs.de" in href and "»" in text
+                    and text not in IGNORIEREN and len(text) > 3):
+                name = text.replace('»', '').strip()
+                flughafen_urls[name] = href
 
-        # Alphabet-Ordner URLs sammeln
-        alphabet_urls = {}
-        for text, href in alle_links(browser):
-            t = text.replace('»', '').strip()
-            if href and t in ['A','B','C-D','E-F','G-H','I-J','K-L','M','N','O-P','Q-R','S','T-U','V-Z']:
-                alphabet_urls[t] = href
+        print(f"{len(flughafen_urls)} Flughäfen gefunden.")
 
-        print(f"{len(alphabet_urls)} Ordner: {list(alphabet_urls.keys())}")
-
-        for ordner, ordner_url in alphabet_urls.items():
-            print(f"\n=== {ordner} ===")
-            browser.get(ordner_url)
+        # 4. Jeden Flughafen aufrufen und Karten sammeln
+        for fh_name, fh_url in flughafen_urls.items():
+            print(f"  {fh_name} ...", end=" ", flush=True)
+            browser.get(fh_url)
             warte(browser)
 
-            flughafen_urls = {}
+            karten = {}
             for text, href in alle_links(browser):
-                if href and "ED" in text and "»" in text and len(text) > 6:
-                    name = text.replace('»', '').strip()
-                    flughafen_urls[name] = href
+                if ist_karte(text, href, fh_url):
+                    karten[text] = href
 
-            print(f"  {len(flughafen_urls)} Flughäfen")
-
-            for fh_name, fh_url in flughafen_urls.items():
-                print(f"  {fh_name} ...", end=" ", flush=True)
-                browser.get(fh_url)
-                warte(browser)
-
-                karten = {}
-                for text, href in alle_links(browser):
-                    if ist_karte(text, href, fh_url):
-                        karten[text] = href
-
-                print(f"({len(karten)} Karten)")
-                katalog[fh_name] = {
-                    "_url": fh_url,
-                    "karten": karten
-                }
+            print(f"({len(karten)} Karten)")
+            katalog[fh_name] = {
+                "_url": fh_url,
+                "karten": karten
+            }
 
         with open("ifr_katalog_export.json", "w", encoding="utf-8") as f:
             json.dump(katalog, f, indent=4, ensure_ascii=False)
